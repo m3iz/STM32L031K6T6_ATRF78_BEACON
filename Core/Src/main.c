@@ -325,27 +325,25 @@ void at86rf233_init(){
 	 seq_nr = 0;
 	 options = 0;
 
-
 	  // Enable promiscuous mode:
-	set_addr_short(0x431); //в передатчике не важно
-	set_pan(0x0023); //не важно
-	set_addr_long(0x1222334445666768); //не важно
+	set_addr_short(0x1);
+	set_pan(0x0023);
+	set_addr_long(0x2222334445666768);
 
-
-	set_chan(AT86RF2XX_DEFAULT_CHANNEL); //важно
-
+	set_chan(AT86RF2XX_DEFAULT_CHANNEL);
 
 	writeRegister(0x05, 0x0); // tx power
 
-	/* set default options*/
+	/* set default options */
 	 set_option(AT86RF2XX_OPT_PROMISCUOUS, 1);
 	 set_option(AT86RF2XX_OPT_AUTOACK, 1);
 	 set_option(AT86RF2XX_OPT_CSMA, 1);
 	 set_option(AT86RF2XX_OPT_TELL_RX_START, 1);
 	 set_option(AT86RF2XX_OPT_TELL_RX_END, 1);
 
-	writeRegister(AT86RF2XX_REG__TRX_CTRL_2, AT86RF2XX_TRX_CTRL_2_MASK__RX_SAFE_MODE); // не важно
+	writeRegister(AT86RF2XX_REG__TRX_CTRL_2, AT86RF2XX_TRX_CTRL_2_MASK__RX_SAFE_MODE);
 
+	readRegister(0x1C);
 
 
 	/* disable clock output to save power */
@@ -361,7 +359,8 @@ void at86rf233_init(){
 	    /* clear interrupt flags */
 	readRegister(AT86RF2XX_REG__IRQ_STATUS);
 
-	set_state(25); //16 - RX_ACACK 6 - rx 25 - tx очень важно
+	//set_state(6); //16 - RX_ACACK 6 - rx 25 - tx
+	set_state(22);
 	////////////////////////////////////////////////////////////
 
 
@@ -600,6 +599,23 @@ void tx_exec()
    /* How many frames is this so far?  */
 
  }
+
+ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+ {
+     if (GPIO_Pin == IRQ_Pin)
+     {
+         last_connected_change_ms = HAL_GetTick();
+
+         uint8_t irq = readRegister(AT86RF2XX_REG__IRQ_STATUS);
+
+         if (irq & AT86RF2XX_IRQ_STATUS_MASK__TRX_END)
+         {
+             uint8_t rssi_raw = readRegister(0x07);
+
+
+         }
+     }
+ }
 /* USER CODE END 0 */
 
 /**
@@ -749,6 +765,12 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, SLP_Pin|RESET_Pin, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin : IRQ_Pin */
+  GPIO_InitStruct.Pin = IRQ_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(IRQ_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : CS_Pin */
   GPIO_InitStruct.Pin = CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -762,6 +784,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI4_15_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
