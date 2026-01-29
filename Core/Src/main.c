@@ -644,6 +644,46 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  //writeRegister(0x02,0x02);
+	  //send("bla", sizeof("bla"));
+	  uint8_t CurrentState = get_status(); //Page 37 of datasheet
+	  uint8_t Interrupt = readRegister(0x0F);
+	  uint8_t PHY_RSSI = readRegister(0x06); //if bit[7] = 1 (RX_CRC_VALID), FCS is valid
+
+	  uint8_t irq_mask = readRegister(AT86RF2XX_REG__IRQ_STATUS);
+
+	  if (irq_mask & AT86RF2XX_IRQ_STATUS_MASK__RX_START){
+		  	//uint8_t test = 0;
+		  	//HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, 1);
+	  }
+	  uint8_t data[] = {"priveti"};
+
+	  send(data, sizeof(data));
+	  //  unsigned long jetzt = millis();
+
+	  // This can be used to write status updates
+	  //  if (jetzt - zuletzt > Intervall)
+	  //  {
+	  //    zuletzt = jetzt;
+	  //
+	  //    Serial.print("Status report @ ");
+	  //    Serial.print(zuletzt);
+	  //    Serial.print(": ");
+	  //    Serial.print(CurrentState, HEX);
+	  //
+	  //    Serial.print("; Interrupt ");
+	  //    Serial.println(Interrupt, BIN);
+	  //
+	  //    if (ctrlZustand == LOW)
+	  //      ctrlZustand = HIGH;
+	  //    else
+	  //      ctrlZustand = LOW;
+	  //
+	  //    digitalWrite(ctrlLED, ctrlZustand);
+	  //
+	  //  }
+
+
   }
   /* USER CODE END 3 */
 }
