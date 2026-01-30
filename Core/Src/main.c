@@ -37,7 +37,7 @@ static uint32_t last_rx_ms = 0;
 #define RSSI_NEAR_THRESHOLD    10      // подобрать экспериментально
 #define RSSI_FAR_THRESHOLD      7
 #define STATE_HOLD_TIME_MS    500      // минимальное время удержания состояния
-#define RX_SILENCE_TIMEOUT_MS   1500
+#define RX_SILENCE_TIMEOUT_MS  4000
 typedef enum {
     RADIO_FAR = 0,
     RADIO_NEAR
