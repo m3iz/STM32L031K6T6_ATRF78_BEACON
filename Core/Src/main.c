@@ -30,26 +30,23 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-uint8_t led_state = 0;
-static uint32_t last_rx_ms = 0;
+#define RSSI_THRESHOLD       6    // порог чувствительности
+#define RSSI_ON_COUNT        25      // сколько подтверждений нужно для включения //25
+#define RSSI_OFF_COUNT       30      // сколько подтверждений нужно для выключения
+#define RSSI_THRESHOLD_LOW 	 3
 
-#define RSSI_WINDOW_SIZE        16      // сколько пакетов усредняем
-#define RSSI_NEAR_THRESHOLD    10      // подобрать экспериментально
-#define RSSI_FAR_THRESHOLD      7
-#define STATE_HOLD_TIME_MS    500      // минимальное время удержания состояния
-#define RX_SILENCE_TIMEOUT_MS  4000
-typedef enum {
-    RADIO_FAR = 0,
-    RADIO_NEAR
-} radio_state_t;
+/* USER CODE END PD */
 
-static uint8_t  rssi_buf[RSSI_WINDOW_SIZE];
-static uint8_t  rssi_idx = 0;
-static uint8_t  rssi_count = 0;
-static uint32_t rssi_sum = 0;
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
 
-static radio_state_t radio_state = RADIO_FAR;
-static uint32_t last_state_change_ms = 0;
+volatile uint32_t last_connected_change_ms = 0;
+
+/* counters for debounce */
+static uint8_t rssi_ok_count = 0;
+static uint8_t rssi_low_count = 0;
+
+static uint8_t led_state = 0;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -78,93 +75,39 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-    if (GPIO_Pin != IRQ_Pin)
-        return;
-    last_rx_ms = HAL_GetTick();
-    uint8_t irq = readRegister(AT86RF2XX_REG__IRQ_STATUS);
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+	if (GPIO_Pin == IRQ_Pin) {
+		last_connected_change_ms = HAL_GetTick();
 
-    if (!(irq & AT86RF2XX_IRQ_STATUS_MASK__TRX_END))
-        return;
+		uint8_t irq = readRegister(AT86RF2XX_REG__IRQ_STATUS);
 
-    uint8_t rssi = readRegister(0x07) & 0x1F;
+		if (irq & AT86RF2XX_IRQ_STATUS_MASK__TRX_END) {
+			uint8_t rssi_raw = readRegister(0x07);
 
-    // кольцевой буфер
-    if (rssi_count < RSSI_WINDOW_SIZE)
-    {
-        rssi_buf[rssi_idx++] = rssi;
-        rssi_sum += rssi;
-        rssi_count++;
-    }
-    else
-    {
-        rssi_sum -= rssi_buf[rssi_idx];
-        rssi_buf[rssi_idx] = rssi;
-        rssi_sum += rssi;
-        rssi_idx++;
-    }
+			if (rssi_raw >= RSSI_THRESHOLD) {
+				rssi_ok_count++;
+				rssi_low_count = 0;
 
-    if (rssi_idx >= RSSI_WINDOW_SIZE)
-        rssi_idx = 0;
-}
+				if (rssi_ok_count >= RSSI_ON_COUNT) {
+					led_state = 1;
+					//for (int i = 0; i < 10; i++) {
+						HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO NEAR\r\n",
+								12,
+								HAL_MAX_DELAY);
+					//}
+				}
+			} else if (rssi_raw <= RSSI_THRESHOLD_LOW) {
+				rssi_low_count++;
+				rssi_ok_count = 0;
 
-void radio_proximity_process(void)
-{
-    uint32_t now = HAL_GetTick();
-
-    /* 1. Потеря сигнала */
-    if ((now - last_rx_ms) > RX_SILENCE_TIMEOUT_MS)
-    {
-        if (radio_state != RADIO_FAR)
-        {
-            radio_state = RADIO_FAR;
-            led_state = 0;
-            rssi_count = 0;
-            rssi_sum = 0;
-            HAL_UART_Transmit(&huart2,
-                              (uint8_t *)"RADIO LOST\r\n",
-                              12,
-                              HAL_MAX_DELAY);
-        }
-        return;
-    }
-
-    /* 2. Недостаточно данных */
-    if (rssi_count < RSSI_WINDOW_SIZE)
-        return;
-
-    uint8_t rssi_avg = rssi_sum / RSSI_WINDOW_SIZE;
-
-    /* 3. FSM */
-    if (radio_state == RADIO_FAR)
-    {
-        if (rssi_avg >= RSSI_NEAR_THRESHOLD &&
-            now - last_state_change_ms >= STATE_HOLD_TIME_MS)
-        {
-            radio_state = RADIO_NEAR;
-            last_state_change_ms = now;
-            led_state = 1;
-            HAL_UART_Transmit(&huart2,
-                              (uint8_t *)"RADIO NEAR\r\n",
-                              12,
-                              HAL_MAX_DELAY);
-        }
-    }
-    else
-    {
-        if (rssi_avg <= RSSI_FAR_THRESHOLD &&
-            now - last_state_change_ms >= STATE_HOLD_TIME_MS)
-        {
-            radio_state = RADIO_FAR;
-            last_state_change_ms = now;
-            led_state = 0;
-            HAL_UART_Transmit(&huart2,
-                              (uint8_t *)"RADIO FAR\r\n",
-                              11,
-                              HAL_MAX_DELAY);
-        }
-    }
+				if (rssi_low_count >= RSSI_OFF_COUNT) {
+					led_state = 0;
+					HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO LOST\r\n", 12,
+					HAL_MAX_DELAY);
+				}
+			}
+		}
+	}
 }
 
 /* USER CODE END 0 */
@@ -207,10 +150,24 @@ int main(void) {
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1) {
-		radio_proximity_process();
+		uint32_t now = HAL_GetTick();
+
+		// fail-safe: если давно не было прерываний - гасим LED
+		if (led_state && (now - last_connected_change_ms) > 5000 && now>last_connected_change_ms) {
+			led_state = 0;
+			rssi_ok_count = 0;
+			rssi_low_count = 0;
+			for (int i = 0; i < 4; i++) {
+				HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO LOST\r\n", 12,
+				HAL_MAX_DELAY);
+				HAL_Delay(100);
+			}
+		}
+
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
+
 	}
 	/* USER CODE END 3 */
 }
