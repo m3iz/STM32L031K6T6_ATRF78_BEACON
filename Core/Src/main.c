@@ -30,9 +30,9 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#define RSSI_THRESHOLD       4    // порог чувствительности
-#define RSSI_ON_COUNT        25      // сколько подтверждений нужно для включения //25
-#define RSSI_OFF_COUNT       30      // сколько подтверждений нужно для выключения
+#define RSSI_THRESHOLD       5    // порог чувствительности
+#define RSSI_ON_COUNT        50      // сколько подтверждений нужно для включения //25
+#define RSSI_OFF_COUNT       150      // сколько подтверждений нужно для выключения
 #define RSSI_THRESHOLD_LOW 	 1
 
 /* USER CODE END PD */
