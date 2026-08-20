@@ -30,29 +30,36 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#define RSSI_THRESHOLD       5    // порог чувствительности
-#define RSSI_ON_COUNT        50      // сколько подтверждений нужно для включения //25
-#define RSSI_OFF_COUNT       150      // сколько подтверждений нужно для выключения
-#define RSSI_THRESHOLD_LOW 	 1
+#define RSSI_THRESHOLD       4    // порог для RADIO CLOSE
+#define RSSI_ON_COUNT        50   // сколько подтверждений нужно для включения
+#define RSSI_OFF_COUNT       150   // сколько подтверждений нужно для выключения
+#define RSSI_THRESHOLD_LOW   1
+#define RSSI_THRESHOLD_CLOSE 6    // порог для RADIO NEAR
 
-/* USER CODE END PD */
+/* USER CODE END PTD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
+// Перечисление возможных состояний связи
+typedef enum {
+	STATE_LOST, STATE_CLOSE, STATE_NEAR
+} connection_state_t;
+
 volatile uint32_t last_connected_change_ms = 0;
 
 /* counters for debounce */
-static uint8_t rssi_ok_count = 0;
-static uint8_t rssi_low_count = 0;
+static uint8_t rssi_ok_count = 0;   // счётчик для CLOSE (RSSI >=4)
+static uint8_t rssi_near_count = 0;   // счётчик для NEAR (RSSI >=6)
+static uint8_t rssi_low_count = 0;   // счётчик для LOST
 
-static uint8_t led_state = 0;
+static connection_state_t current_state = STATE_LOST;
+static uint8_t led_state = 0;     // 1 – есть связь (CLOSE или NEAR), 0 – потеря
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-/* counters for debounce */
 
 /* USER CODE END PD */
 
@@ -84,27 +91,56 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 		if (irq & AT86RF2XX_IRQ_STATUS_MASK__TRX_END) {
 			uint8_t rssi_raw = readRegister(0x07);
 
-			if (rssi_raw >= RSSI_THRESHOLD) {
+			// ---- Обработка уровней RSSI с антидребезгом ----
+			if (rssi_raw >= RSSI_THRESHOLD_CLOSE) {
+				// NEAR (RSSI >= 6)
+				rssi_near_count++;
+				rssi_ok_count = 0;
+				rssi_low_count = 0;
+
+				if (rssi_near_count >= RSSI_ON_COUNT) {
+					// достигнут порог для NEAR
+					if (current_state != STATE_NEAR) {
+						// меняем состояние и отправляем сообщение
+						current_state = STATE_NEAR;
+						led_state = 1;
+						HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO NEAR\r\n",
+								12, HAL_MAX_DELAY);
+					}
+				}
+			} else if (rssi_raw >= RSSI_THRESHOLD) {
+				// CLOSE (4 <= RSSI < 6)
 				rssi_ok_count++;
+				rssi_near_count = 0;
 				rssi_low_count = 0;
 
 				if (rssi_ok_count >= RSSI_ON_COUNT) {
-					led_state = 1;
-					//for (int i = 0; i < 10; i++) {
-						HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO NEAR\r\n",
-								12,
-								HAL_MAX_DELAY);
-					//}
+					if (current_state != STATE_CLOSE) {
+						current_state = STATE_CLOSE;
+						led_state = 1;
+						HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO CLOSE\r\n",
+								13, HAL_MAX_DELAY);
+					}
 				}
 			} else if (rssi_raw <= RSSI_THRESHOLD_LOW) {
+				// LOST
 				rssi_low_count++;
 				rssi_ok_count = 0;
+				rssi_near_count = 0;
 
 				if (rssi_low_count >= RSSI_OFF_COUNT) {
-					led_state = 0;
-					HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO LOST\r\n", 12,
-					HAL_MAX_DELAY);
+					if (current_state != STATE_LOST) {
+						current_state = STATE_LOST;
+						led_state = 0;
+						HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO LOST\r\n",
+								12, HAL_MAX_DELAY);
+					}
 				}
+			} else {
+				// RSSI в промежуточной зоне (между 2 и 3) – сбрасываем все счётчики, но состояние не меняем
+				rssi_ok_count = 0;
+				rssi_near_count = 0;
+				rssi_low_count = 0;
 			}
 		}
 	}
@@ -149,30 +185,46 @@ int main(void) {
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
+	uint32_t last_status_send_ms = HAL_GetTick();
 	while (1) {
 		uint32_t now = HAL_GetTick();
 
-		// fail-safe: если давно не было прерываний - гасим LED
-		if (led_state && (now - last_connected_change_ms) > 5000 && now>last_connected_change_ms) {
+		// fail-safe: если давно не было прерываний и связь считалась установленной – сбрасываем в LOST
+		if ((current_state != STATE_LOST)
+				&& (now - last_connected_change_ms) > 5000
+				&& now > last_connected_change_ms) {
+			current_state = STATE_LOST;
 			led_state = 0;
 			rssi_ok_count = 0;
+			rssi_near_count = 0;
 			rssi_low_count = 0;
 			for (int i = 0; i < 4; i++) {
 				HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO LOST\r\n", 12,
-				HAL_MAX_DELAY);
+						HAL_MAX_DELAY);
 				HAL_Delay(100);
 			}
 		}
-		if((now - last_connected_change_ms) > 2000 && now>last_connected_change_ms){
-			if(led_state ){
-				HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO NEAR\r\n", 12,
-								HAL_MAX_DELAY);
+		if ((now - last_status_send_ms) >= 2000) {
+			last_status_send_ms = now;
+			char msg[64];
+			const char *state_str;
+			switch (current_state) {
+			case STATE_NEAR:
+				state_str = "RADIO_NEAR";
+				break;
+			case STATE_CLOSE:
+				state_str = "RADIO_CLOSE";
+				break;
+			default:
+				state_str = "RADIO_LOST";
+				break;
 			}
-			else {
-				HAL_UART_Transmit(&huart2, (uint8_t*) "RADIO LOST\r\n", 12,
-								HAL_MAX_DELAY);
-			}
+
+			HAL_UART_Transmit(&huart2, (uint8_t*) state_str, strlen(state_str),
+					HAL_MAX_DELAY);
+
 		}
+
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
